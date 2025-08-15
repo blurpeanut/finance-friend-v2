@@ -44,26 +44,25 @@ SYSTEM_MESSAGE_TEMPLATE = (
     "Your Response:\n- If the answer is in the context, respond clearly and concisely.\n- If not, use the fallback message provided above."
 )
 
+
 # ---- API key (Secrets first, then .env) ----
-# Locally, allow .env; on Streamlit Cloud, rely on Secrets.
+from dotenv import load_dotenv
 load_dotenv()
+
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY", "")
 if not OPENAI_API_KEY:
     raise RuntimeError("Missing OPENAI_API_KEY in Streamlit Secrets or environment.")
 
-# Make sure the SDKs can read the key from env (works across versions)
+# Some older stacks mis-route proxies; make sure none are set
+for k in ("HTTP_PROXY","http_proxy","HTTPS_PROXY","https_proxy","ALL_PROXY","all_proxy","OPENAI_PROXY"):
+    os.environ.pop(k, None)
+
+# Let SDKs read the key from env (works across versions)
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 
-# ---- Single initialization (do NOT reassign later) ----
-# Do NOT pass api_key= here; let libs read from env to avoid pydantic schema issues.
-llm = ChatOpenAI(
-    model=CHAT_MODEL,
-    temperature=0,
-)
-
-embeddings = OpenAIEmbeddings(
-    model=EMBEDDING_MODEL,
-)
+# ---- Single initialization (unchanged) ----
+llm = ChatOpenAI(model=CHAT_MODEL, temperature=0)          # no api_key kwarg
+embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL)       # no api_key kwarg
 
 # ---- Token utils ----
 _encoding_cache = {}

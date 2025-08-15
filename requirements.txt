@@ -10,11 +10,9 @@ python-dotenv==1.0.1
 graphviz==0.20.3
 
 # LLM + LangChain (needed for: from langchain_openai import ChatOpenAI, OpenAIEmbeddings)
-openai==1.40.2
+openai==1.43.0
 tiktoken==0.7.0
-langchain==0.2.12
-langchain-community==0.2.11
-langchain-openai==0.1.17
+langchain==0.2.13
+langchain-community==0.2.12
+langchain-openai==0.1.22
 
-# (Optional) vector store if you use it locally
-# faiss-cpu==1.8.0.post1
