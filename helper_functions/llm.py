@@ -9,18 +9,17 @@ from typing import List, Tuple, Optional
 import streamlit as st
 from dotenv import load_dotenv
 
-# put this at the very top of llm.py, before importing Chroma
+# ---- SQLite shim (must run BEFORE importing anything that pulls in chromadb/Chroma)
 try:
     import sqlite3
-    if tuple(map(int, sqlite3.sqlite_version.split("."))) < (3, 35, 0):
-        import sys, pysqlite3
+    ver_tuple = tuple(int(x) for x in sqlite3.sqlite_version.split("."))
+    if ver_tuple < (3, 35, 0):
+        import sys, pysqlite3  # requires pysqlite3-binary in requirements.txt
         sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
 except Exception:
     pass
 
-# SDKs / wrappers
-import httpx
-from openai import OpenAI
+# ---- LangChain / loaders / vector store
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
@@ -30,9 +29,13 @@ from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
 
 import tiktoken
 
-# ---- Constants ----
-POLICY_FOLDER = os.path.abspath("uploaded_policy_docs")
-CHROMA_DIR = os.path.abspath("vector_db/policies")
+# ---- Paths (repo‑relative, robust on Streamlit Cloud)
+THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.abspath(os.path.join(THIS_DIR, ".."))
+POLICY_FOLDER = os.path.join(REPO_ROOT, "uploaded_policy_docs")
+CHROMA_DIR = os.path.join(REPO_ROOT, "vector_db", "policies")
+
+# ---- Constants
 CHAT_MODEL = "gpt-4o-mini"
 EMBEDDING_MODEL = "text-embedding-3-small"
 CHUNK_SIZE_TOKENS = 900
@@ -56,30 +59,26 @@ SYSTEM_MESSAGE_TEMPLATE = (
 )
 
 # ---- API key (Secrets first, then .env) ----
-load_dotenv()  # local runs; on Streamlit Cloud, rely on Secrets
+load_dotenv()  # useful locally; on Cloud we use Secrets
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY", "")
 if not OPENAI_API_KEY:
     raise RuntimeError("Missing OPENAI_API_KEY in Streamlit Secrets or environment.")
 
-# Scrub proxy envs that can trigger incompatible 'proxies' kwargs in some stacks
+# Scrub proxy envs that can cause older stacks to pass an incompatible 'proxies=' kwarg
 for k in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy", "OPENAI_PROXY"):
     os.environ.pop(k, None)
 
-# ---- Build and inject a stable OpenAI client BEFORE creating wrappers ----
-# We give OpenAI an httpx.Client() so it won't try to construct one with 'proxies='.
-http_client = httpx.Client()  # You can add timeouts/limits here if you want.
-openai_client = OpenAI(api_key=OPENAI_API_KEY, http_client=http_client)
+# Ensure SDKs can read the key
+os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 
-# ---- Single initialization (do NOT reassign later) ----
+# ---- Single initialization (no custom client injection to avoid '.create' mismatches)
 llm = ChatOpenAI(
     model=CHAT_MODEL,
     temperature=0,
-    client=openai_client,   # critical: inject client to avoid 'proxies' path
 )
 
 embeddings = OpenAIEmbeddings(
     model=EMBEDDING_MODEL,
-    client=openai_client,   # critical: inject client
 )
 
 # ---- Token utils ----
@@ -111,16 +110,28 @@ def truncate_to_token_limit(chunks: List[str], max_tokens: int, model: str = CHA
 def _load_policy_documents(folder: str = POLICY_FOLDER) -> List[Document]:
     os.makedirs(folder, exist_ok=True)
     docs: List[Document] = []
-    for path in sorted(glob.glob(os.path.join(folder, "**", "*.pdf"), recursive=True)):
+
+    # Helpful debug in server logs
+    try:
+        print("[DEBUG] POLICY_FOLDER =", folder)
+        print("[DEBUG] listdir:", os.listdir(folder))
+    except Exception as e:
+        print("[DEBUG] listdir failed:", e)
+
+    patterns = ["*.pdf", "*.PDF", "*.docx", "*.DOCX"]
+    paths: List[str] = []
+    for pat in patterns:
+        paths.extend(sorted(glob.glob(os.path.join(folder, "**", pat), recursive=True)))
+    print("[DEBUG] matched files:", paths)
+
+    for path in paths:
         try:
-            docs.extend(PyPDFLoader(path).load())
+            if path.lower().endswith(".pdf"):
+                docs.extend(PyPDFLoader(path).load())
+            else:
+                docs.extend(Docx2txtLoader(path).load())
         except Exception as e:
-            print(f"[WARN] Failed to load PDF: {path} — {e}")
-    for path in sorted(glob.glob(os.path.join(folder, "**", "*.docx"), recursive=True)):
-        try:
-            docs.extend(Docx2txtLoader(path).load())
-        except Exception as e:
-            print(f"[WARN] Failed to load DOCX: {path} — {e}")
+            print(f"[WARN] Failed to load {path} — {e}")
     return docs
 
 def _split_documents(documents: List[Document]) -> List[Document]:
@@ -138,22 +149,30 @@ def _ensure_vectordb() -> Chroma:
     global _vectordb
     if _vectordb is not None:
         return _vectordb
+
     os.makedirs(CHROMA_DIR, exist_ok=True)
+
+    # Try to open existing collection first (if persisted from previous run)
     try:
         db = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
         if hasattr(db, "_collection") and getattr(db._collection, "count", None):
-            if db._collection.count() == 0:
+            # If empty, we'll rebuild; otherwise reuse
+            if db._collection.count() > 0:
+                _vectordb = db
+                return _vectordb
+            else:
                 raise ValueError("Empty Chroma collection; rebuild.")
         _vectordb = db
         return _vectordb
     except Exception:
         pass
 
+    # Build (or rebuild) from source docs
     raw_docs = _load_policy_documents(POLICY_FOLDER)
     if not raw_docs:
         raise RuntimeError(f"No policy documents found in '{POLICY_FOLDER}'. Add .pdf or .docx files and retry.")
-    chunks = _split_documents(raw_docs)
 
+    chunks = _split_documents(raw_docs)
     _vectordb = Chroma.from_documents(
         documents=chunks,
         embedding=embeddings,
