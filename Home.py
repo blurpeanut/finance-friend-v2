@@ -19,6 +19,13 @@ from dotenv import load_dotenv
 st.set_page_config(page_title="Finance Friend", layout="wide")
 st.title("💼 Finance Friend")
 
+import streamlit as st, langchain_openai, openai, os
+st.sidebar.code(
+    f"langchain-openai={langchain_openai.__version__}\n"
+    f"openai={openai.__version__}\n"
+    f"has_env_key={bool(os.getenv('OPENAI_API_KEY'))}"
+)
+
 # ================
 # PASSWORD OF APP
 # ================

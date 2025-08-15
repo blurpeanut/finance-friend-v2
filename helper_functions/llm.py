@@ -9,7 +9,10 @@ from typing import List, Tuple, Optional
 import streamlit as st
 from dotenv import load_dotenv
 
-# LangChain / OpenAI
+# OpenAI SDK (we will inject this client into LangChain to avoid 'proxies' kwarg issues)
+from openai import OpenAI
+
+# LangChain / OpenAI wrappers
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
@@ -44,25 +47,30 @@ SYSTEM_MESSAGE_TEMPLATE = (
     "Your Response:\n- If the answer is in the context, respond clearly and concisely.\n- If not, use the fallback message provided above."
 )
 
-
 # ---- API key (Secrets first, then .env) ----
-from dotenv import load_dotenv
-load_dotenv()
-
+load_dotenv()  # okay locally; on Streamlit Cloud rely on Secrets
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY", "")
 if not OPENAI_API_KEY:
     raise RuntimeError("Missing OPENAI_API_KEY in Streamlit Secrets or environment.")
 
-# Some older stacks mis-route proxies; make sure none are set
+# Scrub any proxy envs that might trigger the bad 'proxies' path in some stacks
 for k in ("HTTP_PROXY","http_proxy","HTTPS_PROXY","https_proxy","ALL_PROXY","all_proxy","OPENAI_PROXY"):
     os.environ.pop(k, None)
 
-# Let SDKs read the key from env (works across versions)
-os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
+# Create a single OpenAI client and inject it (this sidesteps the 'proxies' kwarg entirely)
+client = OpenAI(api_key=OPENAI_API_KEY)
 
-# ---- Single initialization (unchanged) ----
-llm = ChatOpenAI(model=CHAT_MODEL, temperature=0)          # no api_key kwarg
-embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL)       # no api_key kwarg
+# ---- Single initialization (do NOT reassign later) ----
+llm = ChatOpenAI(
+    model=CHAT_MODEL,
+    temperature=0,
+    client=client,          # <-- critical: inject client
+)
+
+embeddings = OpenAIEmbeddings(
+    model=EMBEDDING_MODEL,
+    client=client,          # <-- critical: inject client
+)
 
 # ---- Token utils ----
 _encoding_cache = {}
@@ -123,7 +131,6 @@ def _ensure_vectordb() -> Chroma:
     os.makedirs(CHROMA_DIR, exist_ok=True)
     try:
         db = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
-        # If empty (new dir / schema change), trigger rebuild:
         if hasattr(db, "_collection") and getattr(db._collection, "count", None):
             if db._collection.count() == 0:
                 raise ValueError("Empty Chroma collection; rebuild.")
@@ -131,12 +138,10 @@ def _ensure_vectordb() -> Chroma:
         return _vectordb
     except Exception:
         pass
-
     raw_docs = _load_policy_documents(POLICY_FOLDER)
     if not raw_docs:
         raise RuntimeError(f"No policy documents found in '{POLICY_FOLDER}'. Add .pdf or .docx files and retry.")
     chunks = _split_documents(raw_docs)
-
     _vectordb = Chroma.from_documents(
         documents=chunks,
         embedding=embeddings,
@@ -148,10 +153,7 @@ def _ensure_vectordb() -> Chroma:
 # ---- Retrieval / formatting ----
 def _retrieve_chunks(query: str, k: int = RETRIEVER_K) -> List[Document]:
     db = _ensure_vectordb()
-    retriever = db.as_retriever(
-        search_type=RETRIEVER_SEARCH_TYPE,
-        search_kwargs={"k": k, "fetch_k": max(10, k * 3)},
-    )
+    retriever = db.as_retriever(search_type=RETRIEVER_SEARCH_TYPE, search_kwargs={"k": k, "fetch_k": max(10, k * 3)})
     return retriever.get_relevant_documents(query)
 
 def _format_doc_snippet(doc: Document, idx: int) -> str:
