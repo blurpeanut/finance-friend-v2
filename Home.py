@@ -22,7 +22,7 @@ st.title("💼 Finance Friend")
 from importlib.metadata import version, PackageNotFoundError
 import streamlit as st, os
 
-def _v(pkg):
+def _v(pkg: str) -> str:
     try:
         return version(pkg)
     except PackageNotFoundError:
