@@ -19,10 +19,21 @@ from dotenv import load_dotenv
 st.set_page_config(page_title="Finance Friend", layout="wide")
 st.title("💼 Finance Friend")
 
-import streamlit as st, langchain_openai, openai, os
+from importlib.metadata import version, PackageNotFoundError
+import streamlit as st, os
+
+def _v(pkg):
+    try:
+        return version(pkg)
+    except PackageNotFoundError:
+        return "not-installed"
+
 st.sidebar.code(
-    f"langchain-openai={langchain_openai.__version__}\n"
-    f"openai={openai.__version__}\n"
+    "versions:\n"
+    f"langchain-openai={_v('langchain-openai')}\n"
+    f"langchain={_v('langchain')}\n"
+    f"openai={_v('openai')}\n"
+    f"httpx={_v('httpx')}\n"
     f"has_env_key={bool(os.getenv('OPENAI_API_KEY'))}"
 )
 
