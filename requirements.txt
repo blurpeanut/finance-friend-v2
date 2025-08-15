@@ -1,7 +1,20 @@
+# Core
 streamlit==1.36.0
 pandas==2.2.2
 numpy==1.26.4
 plotly==5.22.0
 openpyxl==3.1.2
 python-dotenv==1.0.1
+
+# Diagrams (python bindings). You also need the system binary via packages.txt (see below)
 graphviz==0.20.3
+
+# LLM + LangChain (needed for: from langchain_openai import ChatOpenAI, OpenAIEmbeddings)
+openai==1.40.2
+tiktoken==0.7.0
+langchain==0.2.12
+langchain-community==0.2.11
+langchain-openai==0.1.17
+
+# (Optional) vector store if you use it locally
+# faiss-cpu==1.8.0.post1
