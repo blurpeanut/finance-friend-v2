@@ -17,3 +17,6 @@ langchain-openai==0.1.22
 tiktoken==0.7.0
 httpx==0.27.2    
 
+pypdf==4.3.1        # needed by PyPDFLoader
+docx2txt==0.8       # needed by Docx2txtLoader
+chromadb==0.5.3     # Chroma vector store backend
