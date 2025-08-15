@@ -9,6 +9,15 @@ from typing import List, Tuple, Optional
 import streamlit as st
 from dotenv import load_dotenv
 
+# put this at the very top of llm.py, before importing Chroma
+try:
+    import sqlite3
+    if tuple(map(int, sqlite3.sqlite_version.split("."))) < (3, 35, 0):
+        import sys, pysqlite3
+        sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
+except Exception:
+    pass
+
 # SDKs / wrappers
 import httpx
 from openai import OpenAI
