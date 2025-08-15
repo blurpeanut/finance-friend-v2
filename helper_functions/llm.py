@@ -45,21 +45,24 @@ SYSTEM_MESSAGE_TEMPLATE = (
 )
 
 # ---- API key (Secrets first, then .env) ----
-load_dotenv()  # ok locally; on Cloud use Secrets
+# Locally, allow .env; on Streamlit Cloud, rely on Secrets.
+load_dotenv()
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY", "")
 if not OPENAI_API_KEY:
     raise RuntimeError("Missing OPENAI_API_KEY in Streamlit Secrets or environment.")
 
-# ---- Single, correct initialization (do NOT reassign later) ----
+# Make sure the SDKs can read the key from env (works across versions)
+os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
+
+# ---- Single initialization (do NOT reassign later) ----
+# Do NOT pass api_key= here; let libs read from env to avoid pydantic schema issues.
 llm = ChatOpenAI(
     model=CHAT_MODEL,
     temperature=0,
-    api_key=OPENAI_API_KEY,
 )
 
 embeddings = OpenAIEmbeddings(
     model=EMBEDDING_MODEL,
-    api_key=OPENAI_API_KEY,
 )
 
 # ---- Token utils ----
@@ -121,6 +124,7 @@ def _ensure_vectordb() -> Chroma:
     os.makedirs(CHROMA_DIR, exist_ok=True)
     try:
         db = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
+        # If empty (new dir / schema change), trigger rebuild:
         if hasattr(db, "_collection") and getattr(db._collection, "count", None):
             if db._collection.count() == 0:
                 raise ValueError("Empty Chroma collection; rebuild.")
@@ -128,10 +132,12 @@ def _ensure_vectordb() -> Chroma:
         return _vectordb
     except Exception:
         pass
+
     raw_docs = _load_policy_documents(POLICY_FOLDER)
     if not raw_docs:
         raise RuntimeError(f"No policy documents found in '{POLICY_FOLDER}'. Add .pdf or .docx files and retry.")
     chunks = _split_documents(raw_docs)
+
     _vectordb = Chroma.from_documents(
         documents=chunks,
         embedding=embeddings,
@@ -143,7 +149,10 @@ def _ensure_vectordb() -> Chroma:
 # ---- Retrieval / formatting ----
 def _retrieve_chunks(query: str, k: int = RETRIEVER_K) -> List[Document]:
     db = _ensure_vectordb()
-    retriever = db.as_retriever(search_type=RETRIEVER_SEARCH_TYPE, search_kwargs={"k": k, "fetch_k": max(10, k * 3)})
+    retriever = db.as_retriever(
+        search_type=RETRIEVER_SEARCH_TYPE,
+        search_kwargs={"k": k, "fetch_k": max(10, k * 3)},
+    )
     return retriever.get_relevant_documents(query)
 
 def _format_doc_snippet(doc: Document, idx: int) -> str:
