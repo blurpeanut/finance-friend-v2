@@ -1,0 +1,20 @@
+# Environment variables
+.env
+
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# Virtual environment
+venv/
+ENV/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local data files (optional, if they shouldn’t be in Git)
+uploaded_gl_files/
+uploaded_policy_docs/
+vector_db/
